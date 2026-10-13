@@ -1,12 +1,70 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { connectWS } from "./ws";
 
 export default function App() {
+  // const timer = useRef(null);
+  const socket = useRef(null);
   const [userName, setUserName] = useState("");
   const [showNamePopup, setShowNamePopup] = useState(true);
   const [inputName, setInputName] = useState("");
+  const [typers, setTypers] = useState([]);
 
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
+
+  useEffect(() => {
+    socket.current = connectWS();
+
+    //subscribing
+    socket.current.on("connect", () => {
+      socket.current.on("roomNotice", (userName) => {
+        console.log(`${userName} joined to group!`);
+      });
+
+      socket.current.on("chatMessage", (msg) => {
+        //push to existing messages list
+        console.log("msg", msg);
+        setMessages((prev) => [...prev, msg]);
+      });
+
+      socket.current.on("typing", (userName) => {
+        setTypers((prev) => {
+          const isExist = prev.find((typer) => typer === userName);
+          if (!isExist) {
+            return [...prev, userName];
+          }
+
+          return prev;
+        });
+      });
+
+      socket.current.on("stopTyping", (userName) => {
+        setTypers((prev) => prev.filter((typer) => typer !== userName));
+      });
+    });
+
+    return () => {
+      //unsubscribing
+      socket.current.off("roomNotice");
+      socket.current.off("chatMessage");
+      socket.current.off("typing");
+      socket.current.off("stopTyping");
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!userName || !socket.current) return;
+
+    if (text.trim()) {
+      socket.current.emit("typing", userName);
+    }
+
+    const timerId = setTimeout(() => {
+      socket.current.emit("stopTyping", userName);
+    }, 1000);
+
+    return () => clearTimeout(timerId);
+  }, [text, userName]);
 
   // FORMAT TIMESTAMP TO HH:MM FOR MESSAGES
   function formatTime(ts) {
@@ -21,6 +79,9 @@ export default function App() {
     e.preventDefault();
     const trimmed = inputName.trim();
     if (!trimmed) return;
+
+    //join room
+    socket.current.emit("joinRoom", trimmed);
 
     setUserName(trimmed);
     setShowNamePopup(false);
@@ -39,6 +100,10 @@ export default function App() {
       ts: Date.now(),
     };
     setMessages((m) => [...m, msg]);
+
+    //emit
+    socket.current.emit("chatMessage", msg);
+
     setText("");
   }
 
@@ -94,7 +159,13 @@ export default function App() {
                 Realtime group chat
               </div>
 
-              <div className="text-xs text-gray-500">Someone is typing...</div>
+              {typers.length ? (
+                <div className="text-xs text-gray-500">
+                  {typers.join(",")} is typing...
+                </div>
+              ) : (
+                ""
+              )}
             </div>
             <div className="text-sm text-gray-500">
               Signed in as{" "}
